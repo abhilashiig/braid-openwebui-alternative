@@ -48,6 +48,7 @@ pub struct Inner {
     /// Present only while the install has no users.
     pub setup_token: Mutex<Option<String>>,
     pub login_failures: Mutex<HashMap<String, (u32, std::time::Instant)>>,
+    pub usage: tokio::sync::mpsc::Sender<crate::usage::UsageRow>,
 }
 
 #[derive(Clone)]
@@ -75,6 +76,7 @@ impl AppState {
             token
         });
         Ok(Self(Arc::new(Inner {
+            usage: crate::usage::spawn_writer(db.clone()),
             db,
             config,
             secrets,

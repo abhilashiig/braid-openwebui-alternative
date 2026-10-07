@@ -113,9 +113,10 @@ pub fn url(p: &Provider, path: &str) -> String {
 
 pub fn authed(p: &Provider, req: RequestBuilder, key: &str) -> RequestBuilder {
     let mut req = if p.api_format == "anthropic" {
-        req.header("x-api-key", key).header("anthropic-version", "2023-06-01")
+        let r = req.header("anthropic-version", "2023-06-01");
+        if key.is_empty() { r } else { r.header("x-api-key", key) }
     } else {
-        let mut r = req.bearer_auth(key);
+        let mut r = if key.is_empty() { req } else { req.bearer_auth(key) };
         if let Some(org) = p.organization.as_deref().filter(|s| !s.is_empty()) {
             r = r.header("OpenAI-Organization", org);
         }
@@ -134,7 +135,7 @@ pub fn authed(p: &Provider, req: RequestBuilder, key: &str) -> RequestBuilder {
     req.timeout(Duration::from_secs(p.timeout_secs.max(1) as u64))
 }
 
-fn is_private(ip: IpAddr) -> bool {
+pub fn is_private(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
             v4.is_private()
@@ -202,14 +203,15 @@ pub async fn list_models(state: &AppState, p: &Provider) -> Result<Vec<String>, 
         message: e.message,
         model_count: None,
     })?;
-    let keys = ordered_keys(state, p).await.map_err(|e| TestResult {
+    let mut keys = ordered_keys(state, p).await.map_err(|e| TestResult {
         ok: false,
         status: "error",
         message: e.message,
         model_count: None,
     })?;
     if keys.is_empty() {
-        return Err(TestResult { ok: false, status: "no_key", message: "Add an API key first".into(), model_count: None });
+        // Local servers (Ollama, vLLM) usually need no key.
+        keys.push(ProviderKey { id: Uuid::nil(), secret: String::new() });
     }
     let mut last = None;
     for key in keys {
@@ -228,11 +230,17 @@ pub async fn list_models(state: &AppState, p: &Provider) -> Result<Vec<String>, 
         let status = res.status();
         if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
             let body = res.text().await.unwrap_or_default();
-            mark_key(state, key.id, false, Some(format!("HTTP {status}: {}", truncate(&body, 300)))).await;
+            if !key.id.is_nil() {
+                mark_key(state, key.id, false, Some(format!("HTTP {status}: {}", truncate(&body, 300)))).await;
+            }
             last = Some(TestResult {
                 ok: false,
                 status: "auth",
-                message: format!("The provider rejected the API key (HTTP {})", status.as_u16()),
+                message: if key.id.is_nil() {
+                    "The provider requires an API key. Add one.".into()
+                } else {
+                    format!("The provider rejected the API key (HTTP {})", status.as_u16())
+                },
                 model_count: None,
             });
             continue;
@@ -246,7 +254,9 @@ pub async fn list_models(state: &AppState, p: &Provider) -> Result<Vec<String>, 
                 model_count: None,
             });
         }
-        mark_key(state, key.id, true, None).await;
+        if !key.id.is_nil() {
+            mark_key(state, key.id, true, None).await;
+        }
         let body: Value = res.json().await.map_err(|e| TestResult {
             ok: false,
             status: "error",

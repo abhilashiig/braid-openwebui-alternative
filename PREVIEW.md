@@ -23,6 +23,18 @@ Open **http://localhost:5173**.
 
 ## Available now
 
+### 3. Chat (any signed-in user)
+
+- **http://localhost:5173**: pick a model (top left; only models you can access are listed) and send a message. Replies stream in, with Markdown, highlighted code blocks (with Copy), tables and LaTeX math (`$E=mc^2$`, `$$…$$`).
+- **Under each reply**: output speed, prefill speed, time to first token, and input/output tokens. A `*` means measured by Braid, including network latency; hover for details. **details** shows cached tokens, cache writes and cost (when the model has pricing set).
+- **Chat header**: total tokens for the session, cached tokens, cache hit rate and cost. **⋯** opens chat settings (system prompt, temperature, max tokens, hide metrics) and Markdown/JSON export.
+- **Stop** (or Esc) mid-stream, **Regenerate** the last reply, **Edit** an earlier message to re-run from there, switch model mid-chat (each reply shows its model).
+- Thinking models show a collapsible **Thought process**.
+- **Attach** images (vision models) or text/code files via 📎, paste or drag-and-drop. PDFs are not supported yet.
+- **Sidebar**: chats grouped by date; search by title or message content; rename ✎ or delete 🗑 on hover.
+- **Web search**: an admin enables it under **Admin → Skills** with a Brave Search API key (the Skills admin page arrives in the next update; for now it is set up through the API). Then the 🌐 toggle appears for tool-capable models and replies show "Searched: …" steps and clickable source chips.
+- Light/dark: **Theme** in the sidebar cycles system → light → dark. Works on phone-sized screens (☰ opens the sidebar).
+
 ### 2. Admin console (sign in as the admin)
 
 - **Setup wizard steps 2–3** (`/welcome`, right after creating the admin): add your first provider (presets for OpenAI, Anthropic, OpenRouter, Groq, Together, Mistral, DeepSeek, Ollama, vLLM), test the connection, tick models to import, then name the instance, upload a logo, pick the default model and sign-up mode.

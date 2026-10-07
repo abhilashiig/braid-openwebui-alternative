@@ -45,3 +45,65 @@ pub async fn models_for_user(state: &AppState, user_id: Uuid, include_disabled: 
 pub async fn accessible_models(state: &AppState, user_id: Uuid) -> AppResult<Vec<Model>> {
     Ok(models_for_user(state, user_id, false).await?.into_iter().filter(|m| m.allowed()).map(|m| m.model).collect())
 }
+
+pub enum ModelRef<'a> {
+    Id(Uuid),
+    Name(&'a str),
+}
+
+pub struct Resolved {
+    pub model: Model,
+    pub provider: crate::upstream::Provider,
+}
+
+/// Access check in the spec's order: model exists and is enabled (404), provider has a usable key (503),
+/// then public / direct grant / group grant (403). The caller has already verified the user is active.
+pub async fn resolve(state: &AppState, user_id: Uuid, r: ModelRef<'_>) -> AppResult<Resolved> {
+    use crate::error::AppError;
+    let model: Option<Model> = match r {
+        ModelRef::Id(id) => {
+            sqlx::query_as(sqlx::AssertSqlSafe(format!(
+                "select {MODEL_COLS} from models m join providers p on p.id = m.provider_id where m.id = $1 and m.enabled and p.enabled"
+            )))
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await?
+        }
+        ModelRef::Name(name) => {
+            sqlx::query_as(sqlx::AssertSqlSafe(format!(
+                "select {MODEL_COLS} from models m join providers p on p.id = m.provider_id where m.name = $1 and m.enabled and p.enabled"
+            )))
+            .bind(name)
+            .fetch_optional(&state.db)
+            .await?
+        }
+    };
+    let model = model.ok_or_else(|| AppError::new(axum::http::StatusCode::NOT_FOUND, "model_not_found", "This model does not exist or is disabled"))?;
+    let (keys, healthy): (i64, i64) = sqlx::query_as(
+        "select count(*), count(*) filter (where healthy) from provider_keys where provider_id = $1 and enabled",
+    )
+    .bind(model.provider_id)
+    .fetch_one(&state.db)
+    .await?;
+    if keys > 0 && healthy == 0 {
+        return Err(AppError::new(
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "provider_unavailable",
+            "This model's provider has no working API key. Ask an admin to check the provider.",
+        ));
+    }
+    let allowed: bool = model.visibility == "public"
+        || sqlx::query_scalar(
+            "select exists(select 1 from grants g where g.model_id = $1 and (g.user_id = $2 or g.group_id in (
+                select group_id from group_members where user_id = $2 union select id from groups where is_everyone)))",
+        )
+        .bind(model.id)
+        .bind(user_id)
+        .fetch_one(&state.db)
+        .await?;
+    if !allowed {
+        return Err(AppError::new(axum::http::StatusCode::FORBIDDEN, "model_forbidden", "You don't have access to this model"));
+    }
+    let provider = crate::upstream::load_provider(state, model.provider_id).await?;
+    Ok(Resolved { model, provider })
+}

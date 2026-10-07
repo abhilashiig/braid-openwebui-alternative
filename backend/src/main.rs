@@ -2,14 +2,18 @@ mod access;
 mod admin;
 mod audit;
 mod auth;
+mod chat;
 mod crypto;
 mod error;
+mod llm;
 mod settings;
 mod setup;
+mod skills;
 mod providers;
 mod spa;
 mod state;
 mod upstream;
+mod usage;
 
 use std::net::SocketAddr;
 
@@ -48,6 +52,8 @@ async fn main() -> anyhow::Result<()> {
         .merge(auth::routes())
         .merge(admin::routes())
         .merge(providers::routes())
+        .merge(skills::routes())
+        .merge(chat::routes())
         .layer(middleware::from_fn(csrf_guard))
         .route("/api/health", get(health))
         .fallback(spa::serve)

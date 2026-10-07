@@ -40,3 +40,25 @@
 		@apply text-sm text-zinc-500 dark:text-zinc-400;
 	}
 }
+
+.code-block {
+	@apply my-3 overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800;
+}
+.code-block .code-head {
+	@apply flex items-center justify-between bg-zinc-100 px-3 py-1 text-xs text-zinc-500 dark:bg-zinc-900;
+}
+.code-block .code-head button {
+	@apply rounded px-1.5 py-0.5 hover:bg-zinc-200 dark:hover:bg-zinc-800;
+}
+.code-block pre {
+	@apply m-0 overflow-x-auto rounded-none bg-zinc-50 p-3 text-[13px] leading-relaxed dark:bg-zinc-950;
+}
+.shiki span {
+	color: var(--shiki-light);
+}
+.dark .shiki span {
+	color: var(--shiki-dark);
+}
+.prose :where(table) {
+	@apply block overflow-x-auto;
+}
