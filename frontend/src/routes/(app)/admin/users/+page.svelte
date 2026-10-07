@@ -136,11 +136,12 @@
 	{#if inviteResult}
 		<div class="space-y-3">
 			{#if inviteResult.invited.length}
-				<p class="text-sm">Send each person their link. Links are single-use.</p>
+				<p class="text-sm">{inviteResult.invited.every((i) => i.emailed) ? 'Invitations were emailed. You can also copy the links.' : 'Send each person their link. Links are single-use.'}</p>
 				<ul class="divide-y divide-zinc-100 rounded-lg border border-zinc-200 text-sm dark:divide-zinc-800 dark:border-zinc-800">
 					{#each inviteResult.invited as i}
 						<li class="flex items-center gap-2 px-3 py-2">
 							<span class="w-48 shrink-0 truncate font-medium">{i.email}</span>
+							{#if i.emailed}<span class="text-xs text-green-700 dark:text-green-400">emailed</span>{/if}
 							<code class="min-w-0 flex-1 truncate text-xs">{i.link}</code>
 							<CopyButton text={i.link} />
 						</li>

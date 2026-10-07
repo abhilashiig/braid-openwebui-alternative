@@ -35,7 +35,11 @@
 			<input id="password" class="input" type="password" autocomplete="current-password" required bind:value={password} />
 		</div>
 		<button class="btn w-full" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
-		<p class="muted text-center">Forgot your password? Ask an admin for a reset link.</p>
+		{#if session.instance?.email_enabled}
+			<p class="muted text-center"><a class="underline" href="/forgot">Forgot your password?</a></p>
+		{:else}
+			<p class="muted text-center">Forgot your password? Ask an admin for a reset link.</p>
+		{/if}
 		{#if session.instance?.open_signup}
 			<p class="muted text-center">No account? <a class="underline" href="/signup">Sign up</a></p>
 		{/if}

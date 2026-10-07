@@ -10,7 +10,7 @@
 	let { children }: LayoutProps = $props();
 	let loadError = $state('');
 
-	const PUBLIC = ['/setup', '/login', '/signup', '/invite/', '/reset/'];
+	const PUBLIC = ['/setup', '/login', '/signup', '/forgot', '/invite/', '/reset/'];
 
 	applyTheme();
 	loadSession().catch((e) => (loadError = e.message));
@@ -22,7 +22,7 @@
 		if (session.instance?.needs_setup) return path === '/setup' ? null : '/setup';
 		if (path === '/setup') return session.me ? '/welcome' : '/login';
 		if (!session.me && !isPublic) return '/login';
-		if (session.me && (path === '/login' || path === '/signup')) return '/';
+		if (session.me && (path === '/login' || path === '/signup' || path === '/forgot')) return '/';
 		if (session.me && path.startsWith('/admin') && session.me.user.role !== 'admin') return '/';
 		return null;
 	});

@@ -49,7 +49,9 @@
 
 	async function forceReset() {
 		if (!confirm('Sign this user out everywhere and create a password reset link?')) return;
-		resetLink = (await post(`/api/admin/users/${id}/reset-link`)).link;
+		const r = await post(`/api/admin/users/${id}/reset-link`);
+		resetLink = r.link;
+		if (r.emailed) notice = 'Reset link emailed to the user';
 	}
 
 	async function grantDirect() {

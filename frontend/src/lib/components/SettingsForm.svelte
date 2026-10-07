@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { get, put, errorMessage } from '#lib/api.ts';
+	import { get, post, put, errorMessage } from '#lib/api.ts';
 	import { loadSession } from '#lib/session.svelte.ts';
 
 	let { compact = false, onsaved }: { compact?: boolean; onsaved?: () => void } = $props();
@@ -10,6 +10,25 @@
 	let notice = $state('');
 	let domains = $state('');
 	let hosts = $state('');
+	let smtpPassword = $state('');
+	let testTo = $state('');
+	let smtpMsg = $state<{ ok: boolean; text: string } | null>(null);
+
+	async function saveSmtpPassword() {
+		await put('/api/admin/settings/smtp-password', { password: smtpPassword });
+		smtpPassword = '';
+		s.smtp_password_set = true;
+		smtpMsg = { ok: true, text: 'SMTP password saved' };
+	}
+
+	async function testSmtp() {
+		smtpMsg = { ok: true, text: 'Sending…' };
+		try {
+			smtpMsg = await post('/api/admin/settings/smtp-test', { to: testTo }).then((r) => ({ ok: r.ok, text: r.message }));
+		} catch (e) {
+			smtpMsg = { ok: false, text: errorMessage(e) };
+		}
+	}
 
 	get('/api/admin/settings').then((r) => {
 		s = r;
@@ -94,6 +113,38 @@
 					<p class="muted mt-1">Hosts on private networks that providers and page fetches may reach (e.g. a local Ollama).</p>
 				</div>
 			</div>
+		{/if}
+		{#if !compact}
+			<fieldset class="space-y-4 rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
+				<legend class="px-1 text-sm font-semibold">Outbound email (SMTP)</legend>
+				<p class="muted">Used for invitations and password resets. Without it, admins copy invite and reset links from the UI.</p>
+				<div class="grid gap-4 sm:grid-cols-3">
+					<div class="sm:col-span-2"><label class="label" for="s-host">SMTP host</label><input id="s-host" class="input" bind:value={s.smtp_host} placeholder="smtp.example.com" /></div>
+					<div><label class="label" for="s-port">Port</label><input id="s-port" class="input" type="number" min="1" max="65535" bind:value={s.smtp_port} /></div>
+					<div>
+						<label class="label" for="s-tls">Security</label>
+						<select id="s-tls" class="input" bind:value={s.smtp_tls}><option value="starttls">STARTTLS (587)</option><option value="tls">TLS (465)</option><option value="none">None (local relay only)</option></select>
+					</div>
+					<div><label class="label" for="s-user">Username</label><input id="s-user" class="input" autocomplete="off" bind:value={s.smtp_username} /></div>
+					<div><label class="label" for="s-from">From address</label><input id="s-from" class="input" bind:value={s.smtp_from} placeholder="Braid <noreply@example.com>" /></div>
+				</div>
+				<div class="flex flex-wrap items-end gap-3">
+					<div class="min-w-60 flex-1">
+						<label class="label" for="s-pass">Password</label>
+						<input id="s-pass" class="input" type="password" autocomplete="new-password" bind:value={smtpPassword} placeholder={s.smtp_password_set ? 'Saved. Enter a new one to replace it.' : ''} />
+					</div>
+					<button type="button" class="btn-secondary" disabled={!smtpPassword} onclick={saveSmtpPassword}>Save password</button>
+				</div>
+				<div class="flex flex-wrap items-end gap-3">
+					<div class="min-w-60 flex-1"><label class="label" for="s-test">Send a test email to</label><input id="s-test" class="input" type="email" bind:value={testTo} /></div>
+					<button type="button" class="btn-secondary" disabled={!testTo} onclick={testSmtp}>Send test</button>
+				</div>
+				<p class="muted">Save settings before testing.</p>
+				{#if smtpMsg}<p class="text-sm {smtpMsg.ok ? 'text-green-700 dark:text-green-400' : 'text-red-600'}" role="status">{smtpMsg.text}</p>{/if}
+			</fieldset>
+			{#if s.env_overrides?.length}
+				<p class="text-sm text-amber-700 dark:text-amber-400">Set by environment variables (they win over values saved here): {s.env_overrides.join(', ')}</p>
+			{/if}
 		{/if}
 		<div class="flex items-center justify-end gap-3">
 			{#if notice}<span class="text-sm text-green-700 dark:text-green-400" role="status">{notice}</span>{/if}

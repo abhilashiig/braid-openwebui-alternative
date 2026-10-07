@@ -23,6 +23,12 @@ Open **http://localhost:5173**.
 
 ## Available now
 
+### 5. Email, Docker, end-to-end check
+
+- **Admin → Settings → Outbound email (SMTP)**: host, port, security, username, password, From address, and **Send test**. With SMTP set, invitations and admin-forced resets are emailed (links still shown), and the sign-in page offers **Forgot your password?** (`/forgot`).
+- **Docker**: `docker compose up -d --build` runs Braid plus PostgreSQL on http://localhost:3000 (see README.md; needs a `.env` with `BRAID_MASTER_KEY`).
+- **Acceptance check**: `python3 scripts/e2e.py` (after `cargo build` in `backend/`) spins up a fresh database and a mock provider and checks the spec's acceptance criteria, including a scan that no provider key leaks into responses or logs.
+
 ### 4. API gateway, API keys, skills, usage
 
 - **Admin → Settings**: tick **Allow all users to create platform API keys** (or allow it per group or per user).

@@ -529,7 +529,13 @@ pub async fn open(state: &AppState, p: &Provider, req: &ChatRequest, streaming: 
                 if !key.id.is_nil() {
                     upstream::mark_key(state, key.id, true, None).await;
                 }
-                return Ok(if streaming { sse_events(res, anthropic) } else { full_events(res, anthropic).await });
+                // Some compatible servers ignore `stream: true` and answer with plain JSON.
+                let is_json = res
+                    .headers()
+                    .get("content-type")
+                    .and_then(|v| v.to_str().ok())
+                    .is_some_and(|v| v.starts_with("application/json"));
+                return Ok(if streaming && !is_json { sse_events(res, anthropic) } else { full_events(res, anthropic).await });
             }
             let retry_after = res.headers().get("retry-after").and_then(|v| v.to_str().ok()?.parse::<u64>().ok());
             let text = res.text().await.unwrap_or_default();

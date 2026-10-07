@@ -35,6 +35,8 @@ pub fn routes() -> Router<AppState> {
         .route("/api/admin/groups/{id}/grants", post(grant_to_group))
         .route("/api/admin/grants/{id}", delete(delete_grant))
         .route("/api/admin/settings", get(get_settings).put(put_settings))
+        .route("/api/admin/settings/smtp-password", put(put_smtp_password))
+        .route("/api/admin/settings/smtp-test", post(smtp_test))
         .route("/api/admin/audit", get(audit_log))
         .route("/api/admin/usage", get(usage_report))
         .route("/api/admin/usage.csv", get(usage_csv))
@@ -284,7 +286,13 @@ async fn reset_link(State(state): State<AppState>, admin: Admin, Path(id): Path<
     }
     tx.commit().await?;
     audit::record(&state, &admin.0, "user.password_reset_forced", "user", id, json!({})).await;
-    Ok(Json(json!({ "link": format!("{}/reset/{token}", state.config.public_url), "expires_in_hours": 24 })))
+    let link = format!("{}/reset/{token}", state.config.public_url);
+    let emailed = crate::mail::enabled(&state).await;
+    if emailed {
+        let email: String = sqlx::query_scalar("select email from users where id = $1").bind(id).fetch_one(&state.db).await?;
+        crate::mail::send_later(&state, email, "Reset your password".into(), format!("An admin asked you to set a new password:\n{link}\n\nThe link expires in 24 hours."));
+    }
+    Ok(Json(json!({ "link": link, "expires_in_hours": 24, "emailed": emailed })))
 }
 
 #[derive(Serialize, sqlx::FromRow)]
@@ -362,7 +370,9 @@ async fn invite(State(state): State<AppState>, admin: Admin, Json(req): Json<Inv
         .bind(Utc::now() + Duration::days(ttl))
         .fetch_one(&state.db)
         .await?;
-        invited.push(json!({ "id": id, "email": email, "link": format!("{}/invite/{token}", state.config.public_url) }));
+        let link = format!("{}/invite/{token}", state.config.public_url);
+        let emailed = email_invite(&state, &admin.0, &email, &link, ttl).await;
+        invited.push(json!({ "id": id, "email": email, "link": link, "emailed": emailed }));
     }
     audit::record(
         &state,
@@ -390,7 +400,23 @@ async fn resend_invitation(State(state): State<AppState>, admin: Admin, Path(id)
     .await?
     .ok_or_else(|| AppError::not_found("Pending invitation"))?;
     audit::record(&state, &admin.0, "invitation.resent", "invitation", id, json!({ "email": email })).await;
-    Ok(Json(json!({ "email": email, "link": format!("{}/invite/{token}", state.config.public_url) })))
+    let link = format!("{}/invite/{token}", state.config.public_url);
+    let emailed = email_invite(&state, &admin.0, &email, &link, ttl).await;
+    Ok(Json(json!({ "email": email, "link": link, "emailed": emailed })))
+}
+
+async fn email_invite(state: &AppState, inviter: &auth::CurrentUser, email: &str, link: &str, ttl: i64) -> bool {
+    if !crate::mail::enabled(state).await {
+        return false;
+    }
+    let name = settings::get(state).await.map(|s| s.name).unwrap_or_else(|_| "Braid".into());
+    crate::mail::send_later(
+        state,
+        email.to_string(),
+        format!("You're invited to {name}"),
+        format!("{} invited you to {name}.\n\nAccept the invitation and set your password:\n{link}\n\nThe link works once and expires in {ttl} days.", inviter.name),
+    );
+    true
 }
 
 async fn revoke_invitation(State(state): State<AppState>, admin: Admin, Path(id): Path<Uuid>) -> AppResult<Json<Value>> {
@@ -611,8 +637,41 @@ async fn delete_grant(State(state): State<AppState>, admin: Admin, Path(id): Pat
     Ok(Json(json!({ "ok": true })))
 }
 
-async fn get_settings(State(state): State<AppState>, _: Admin) -> AppResult<Json<InstanceSettings>> {
-    Ok(Json(settings::get(&state).await?))
+async fn get_settings(State(state): State<AppState>, _: Admin) -> AppResult<Json<Value>> {
+    let s = settings::get(&state).await?;
+    let mut v = serde_json::to_value(&s).unwrap();
+    v["env_overrides"] = json!(settings::apply_env(&mut s.clone()));
+    v["smtp_password_set"] = json!(settings::smtp_password(&state).await.is_some());
+    Ok(Json(v))
+}
+
+#[derive(Deserialize)]
+struct SmtpPassword {
+    password: String,
+}
+
+async fn put_smtp_password(State(state): State<AppState>, admin: Admin, Json(req): Json<SmtpPassword>) -> AppResult<Json<Value>> {
+    settings::set_smtp_password(&state, &req.password).await?;
+    audit::record(&state, &admin.0, "settings.smtp_password_set", "settings", "smtp", json!({})).await;
+    Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+struct SmtpTest {
+    to: String,
+}
+
+async fn smtp_test(State(state): State<AppState>, admin: Admin, Json(req): Json<SmtpTest>) -> AppResult<Json<Value>> {
+    let to = auth::normalize_email(&req.to)?;
+    let name = settings::get(&state).await?.name;
+    Ok(Json(match crate::mail::send(&state, &to, &format!("{name}: test email"), "Email from Braid is working.").await {
+        Ok(true) => json!({ "ok": true, "message": format!("Sent to {to}") }),
+        Ok(false) => json!({ "ok": false, "message": "Set the SMTP host and From address first" }),
+        Err(e) => {
+            tracing::warn!(admin = %admin.0.email, "SMTP test failed: {e:#}");
+            json!({ "ok": false, "message": format!("{e:#}") })
+        }
+    }))
 }
 
 async fn put_settings(
@@ -623,6 +682,9 @@ async fn put_settings(
     s.name = s.name.trim().to_string();
     if s.name.is_empty() {
         return Err(AppError::bad_request("Instance name is required"));
+    }
+    if !matches!(s.smtp_tls.as_str(), "starttls" | "tls" | "none") {
+        return Err(AppError::bad_request("SMTP security must be starttls, tls or none"));
     }
     if !matches!(s.signup_mode.as_str(), "invite" | "open") {
         return Err(AppError::bad_request("Sign-up mode must be invite or open"));

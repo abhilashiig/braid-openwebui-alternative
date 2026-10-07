@@ -8,6 +8,7 @@ mod error;
 mod gateway;
 mod keys;
 mod llm;
+mod mail;
 mod settings;
 mod setup;
 mod skills;

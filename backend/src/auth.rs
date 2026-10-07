@@ -106,6 +106,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/auth/signup", post(signup))
         .route("/api/auth/invite/{token}", get(get_invite).post(accept_invite))
         .route("/api/auth/reset/{token}", post(reset_password))
+        .route("/api/auth/forgot", post(forgot_password))
         .route("/api/instance", get(instance))
 }
 
@@ -247,6 +248,7 @@ async fn instance(State(state): State<AppState>) -> AppResult<Json<Value>> {
         "logo_url": s.logo_url,
         "needs_setup": needs_setup,
         "open_signup": s.signup_mode == "open",
+        "email_enabled": crate::mail::enabled(&state).await,
     })))
 }
 
@@ -418,5 +420,44 @@ async fn reset_password(
         .await?;
     sqlx::query("delete from sessions where user_id = $1").bind(user_id).execute(&mut *tx).await?;
     tx.commit().await?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+struct ForgotReq {
+    email: String,
+}
+
+/// Always answers the same way so it cannot be used to discover which emails have accounts.
+async fn forgot_password(State(state): State<AppState>, Json(req): Json<ForgotReq>) -> AppResult<Json<Value>> {
+    let email = req.email.trim().to_lowercase();
+    let user: Option<Uuid> = sqlx::query_scalar("select id from users where lower(email) = $1 and status = 'active'")
+        .bind(&email)
+        .fetch_optional(&state.db)
+        .await?;
+    if let Some(id) = user {
+        let recent: bool = sqlx::query_scalar(
+            "select exists(select 1 from password_resets where user_id = $1 and expires_at > now() + interval '23 hours 55 minutes')",
+        )
+        .bind(id)
+        .fetch_one(&state.db)
+        .await?;
+        if !recent && crate::mail::enabled(&state).await {
+            let token = crypto::random_token(32);
+            sqlx::query("insert into password_resets (token_hash, user_id, expires_at) values ($1, $2, $3)")
+                .bind(crypto::sha256(&token))
+                .bind(id)
+                .bind(Utc::now() + Duration::hours(24))
+                .execute(&state.db)
+                .await?;
+            let link = format!("{}/reset/{token}", state.config.public_url);
+            crate::mail::send_later(
+                &state,
+                email,
+                "Reset your password".into(),
+                format!("Someone asked to reset the password for this account. If it was you, open:\n{link}\n\nThe link expires in 24 hours. Otherwise ignore this email."),
+            );
+        }
+    }
     Ok(Json(json!({ "ok": true })))
 }

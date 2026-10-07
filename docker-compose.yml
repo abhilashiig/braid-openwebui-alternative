@@ -1,0 +1,34 @@
+services:
+  db:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: braid
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-braid}
+      POSTGRES_DB: braid
+    volumes:
+      - db:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U braid -d braid"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  braid:
+    build: .
+    image: braid:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://braid:${POSTGRES_PASSWORD:-braid}@db:5432/braid
+      BRAID_MASTER_KEY: ${BRAID_MASTER_KEY:?Set BRAID_MASTER_KEY in .env (openssl rand -base64 32)}
+      BRAID_PUBLIC_URL: ${BRAID_PUBLIC_URL:-http://localhost:3000}
+      BRAID_SETUP_TOKEN: ${BRAID_SETUP_TOKEN:-}
+      BRAID_TRUST_PROXY: ${BRAID_TRUST_PROXY:-false}
+    ports:
+      - "3000:3000"
+
+volumes:
+  db:
