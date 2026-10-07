@@ -1,0 +1,4 @@
+/backend/target
+.env
+mise.local.toml
+.DS_Store

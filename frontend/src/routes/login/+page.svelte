@@ -1,0 +1,43 @@
+<script lang="ts">
+	import { post, errorMessage } from '#lib/api';
+	import { loadSession, session } from '#lib/session.svelte';
+	import AuthCard from '#lib/components/AuthCard.svelte';
+
+	let email = $state('');
+	let password = $state('');
+	let error = $state('');
+	let busy = $state(false);
+
+	async function submit(e: SubmitEvent) {
+		e.preventDefault();
+		busy = true;
+		error = '';
+		try {
+			await post('/api/auth/login', { email, password });
+			await loadSession();
+		} catch (err) {
+			error = errorMessage(err);
+		} finally {
+			busy = false;
+		}
+	}
+</script>
+
+<AuthCard title="Sign in">
+	<form class="space-y-4" onsubmit={submit}>
+		{#if error}<p class="error" role="alert">{error}</p>{/if}
+		<div>
+			<label class="label" for="email">Email</label>
+			<input id="email" class="input" type="email" autocomplete="username" required bind:value={email} />
+		</div>
+		<div>
+			<label class="label" for="password">Password</label>
+			<input id="password" class="input" type="password" autocomplete="current-password" required bind:value={password} />
+		</div>
+		<button class="btn w-full" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
+		<p class="muted text-center">Forgot your password? Ask an admin for a reset link.</p>
+		{#if session.instance?.open_signup}
+			<p class="muted text-center">No account? <a class="underline" href="/signup">Sign up</a></p>
+		{/if}
+	</form>
+</AuthCard>
