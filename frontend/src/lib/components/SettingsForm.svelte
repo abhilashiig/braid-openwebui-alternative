@@ -107,6 +107,14 @@
 				<div><label class="label" for="s-tools">Max tool calls per reply</label><input id="s-tools" class="input" type="number" min="1" max="20" bind:value={s.max_tool_calls} /></div>
 				<label class="flex items-center gap-2 text-sm"><input type="checkbox" bind:checked={s.show_metrics} /> Show speed and token metrics under replies by default</label>
 				<label class="flex items-center gap-2 text-sm"><input type="checkbox" bind:checked={s.log_content} /> Log prompt content for API requests</label>
+				<div>
+					<label class="label" for="s-2fa">Require two-factor authentication</label>
+					<select id="s-2fa" class="input" bind:value={s.require_2fa}>
+						<option value="none">Optional for everyone</option>
+						<option value="admins">Required for admins</option>
+						<option value="everyone">Required for everyone</option>
+					</select>
+				</div>
 				<div class="sm:col-span-2">
 					<label class="label" for="s-hosts">Allowed private hosts</label>
 					<input id="s-hosts" class="input font-mono" bind:value={hosts} placeholder="localhost, 10.0.0.5" />

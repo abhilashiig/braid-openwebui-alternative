@@ -28,6 +28,8 @@ pub struct InstanceSettings {
     pub smtp_from: Option<String>,
     /// starttls | tls | none
     pub smtp_tls: String,
+    /// none | admins | everyone
+    pub require_2fa: String,
 }
 
 impl Default for InstanceSettings {
@@ -51,6 +53,7 @@ impl Default for InstanceSettings {
             smtp_username: None,
             smtp_from: None,
             smtp_tls: "starttls".into(),
+            require_2fa: "none".into(),
         }
     }
 }

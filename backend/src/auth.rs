@@ -32,6 +32,9 @@ pub struct CurrentUser {
     pub name: String,
     pub role: String,
     pub must_reset_password: bool,
+    pub totp_enabled: bool,
+    #[sqlx(skip)]
+    pub must_enroll_2fa: bool,
     #[sqlx(skip)]
     #[serde(skip)]
     pub ip: Option<String>,
@@ -41,6 +44,10 @@ impl CurrentUser {
     pub fn is_admin(&self) -> bool {
         self.role == "admin"
     }
+}
+
+pub fn requires_2fa(policy: &str, role: &str) -> bool {
+    policy == "everyone" || (policy == "admins" && role == "admin")
 }
 
 pub struct Admin(pub CurrentUser);
@@ -67,20 +74,29 @@ impl FromRequestParts<AppState> for CurrentUser {
         let token = cookie_value(&parts.headers, SESSION_COOKIE).ok_or_else(AppError::unauthorized)?;
         let mut user: CurrentUser = sqlx::query_as(
             "with s as (
-                select u.id, u.email, u.name, u.role, u.must_reset_password, u.last_active_at
+                select u.id, u.email, u.name, u.role, u.must_reset_password, u.totp_enabled, u.last_active_at
                 from sessions s join users u on u.id = s.user_id
                 where s.token_hash = $1 and s.expires_at > now() and u.status = 'active'
              ), touch as (
                 update users set last_active_at = now()
                 where id = (select id from s) and coalesce((select last_active_at from s) < now() - interval '5 minutes', true)
              )
-             select id, email, name, role, must_reset_password from s",
+             select id, email, name, role, must_reset_password, totp_enabled from s",
         )
         .bind(crypto::sha256(token))
         .fetch_optional(&state.db)
         .await?
         .ok_or_else(AppError::unauthorized)?;
         user.ip = state.client_ip(&parts.headers, peer(parts));
+        if !user.totp_enabled {
+            let policy = settings::get(state).await?.require_2fa;
+            user.must_enroll_2fa = requires_2fa(&policy, &user.role);
+            // Until enrolled, only what is needed to enroll (or leave) is reachable.
+            let path = parts.uri.path();
+            if user.must_enroll_2fa && !(path == "/api/auth/me" || path == "/api/auth/logout" || path.starts_with("/api/me/2fa")) {
+                return Err(AppError::new(StatusCode::FORBIDDEN, "2fa_required", "Set up two-factor authentication in Settings first"));
+            }
+        }
         Ok(user)
     }
 }
@@ -107,6 +123,9 @@ pub fn routes() -> Router<AppState> {
         .route("/api/auth/invite/{token}", get(get_invite).post(accept_invite))
         .route("/api/auth/reset/{token}", post(reset_password))
         .route("/api/auth/forgot", post(forgot_password))
+        .route("/api/me/2fa/setup", post(totp_setup))
+        .route("/api/me/2fa/enable", post(totp_enable))
+        .route("/api/me/2fa/disable", post(totp_disable))
         .route("/api/instance", get(instance))
 }
 
@@ -167,6 +186,7 @@ pub async fn validate_password(state: &AppState, password: &str) -> AppResult<()
 struct LoginReq {
     email: String,
     password: String,
+    code: Option<String>,
 }
 
 async fn login(
@@ -188,13 +208,13 @@ async fn login(
             }
         }
     }
-    let row: Option<(Uuid, Option<String>, String)> =
-        sqlx::query_as("select id, password_hash, status from users where lower(email) = $1")
+    let row: Option<(Uuid, Option<String>, String, bool)> =
+        sqlx::query_as("select id, password_hash, status, totp_enabled from users where lower(email) = $1")
             .bind(&key)
             .fetch_optional(&state.db)
             .await?;
     let ok = match &row {
-        Some((_, Some(hash), status)) => crypto::verify_password(&req.password, hash) && status == "active",
+        Some((_, Some(hash), status, _)) => crypto::verify_password(&req.password, hash) && status == "active",
         _ => {
             // Equalize timing with the found-user path.
             static DUMMY: std::sync::LazyLock<String> =
@@ -214,9 +234,22 @@ async fn login(
         e.1 = Instant::now();
         return Err(AppError::new(StatusCode::UNAUTHORIZED, "invalid_credentials", "Wrong email or password"));
     }
+    let (user_id, _, _, totp) = row.unwrap();
+    if totp {
+        let Some(code) = req.code.as_deref().filter(|c| !c.trim().is_empty()) else {
+            return Err(AppError::new(StatusCode::UNAUTHORIZED, "totp_required", "Enter the 6-digit code from your authenticator app"));
+        };
+        if !check_totp(&state, user_id, code).await? {
+            let mut failures = state.login_failures.lock().unwrap();
+            let e = failures.entry(key).or_insert((0, Instant::now()));
+            e.0 += 1;
+            e.1 = Instant::now();
+            return Err(AppError::new(StatusCode::UNAUTHORIZED, "totp_invalid", "That code is wrong or was already used"));
+        }
+    }
     state.login_failures.lock().unwrap().remove(&key);
     let ip = state.client_ip(&headers, Some(addr));
-    let cookie = start_session(&state, row.unwrap().0, ip, &headers).await?;
+    let cookie = start_session(&state, user_id, ip, &headers).await?;
     Ok((cookie, Json(json!({ "ok": true }))))
 }
 
@@ -459,5 +492,83 @@ async fn forgot_password(State(state): State<AppState>, Json(req): Json<ForgotRe
             );
         }
     }
+    Ok(Json(json!({ "ok": true })))
+}
+
+/// Verifies a TOTP code and records its step so the same code cannot be used twice.
+async fn check_totp(state: &AppState, user_id: Uuid, code: &str) -> AppResult<bool> {
+    let row: Option<(Option<Vec<u8>>, Option<i64>)> =
+        sqlx::query_as("select totp_secret, totp_last_step from users where id = $1").bind(user_id).fetch_optional(&state.db).await?;
+    let Some((Some(ct), last)) = row else { return Ok(false) };
+    let secret = hex::decode(state.secrets.decrypt(&ct)?).map_err(|e| anyhow::anyhow!(e))?;
+    let now = Utc::now().timestamp() as u64;
+    let Some(step) = crypto::totp_match(&secret, code, now) else { return Ok(false) };
+    let updated = sqlx::query(
+        "update users set totp_last_step = $2 where id = $1 and (totp_last_step is null or totp_last_step < $2)",
+    )
+    .bind(user_id)
+    .bind(step as i64)
+    .execute(&state.db)
+    .await?
+    .rows_affected();
+    Ok(updated == 1 && last.is_none_or(|l| (step as i64) > l))
+}
+
+async fn totp_setup(State(state): State<AppState>, user: CurrentUser) -> AppResult<Json<Value>> {
+    if user.totp_enabled {
+        return Err(AppError::conflict("Two-factor authentication is already on. Turn it off first."));
+    }
+    let mut raw = [0u8; 20];
+    rand::fill(&mut raw);
+    let secret = crypto::base32(&raw);
+    sqlx::query("update users set totp_secret = $2, totp_last_step = null where id = $1")
+        .bind(user.id)
+        .bind(state.secrets.encrypt(&hex::encode(raw)))
+        .execute(&state.db)
+        .await?;
+    let issuer = settings::get(&state).await?.name;
+    let enc = |s: &str| s.bytes().map(|b| if b.is_ascii_alphanumeric() || b"-._~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect::<String>();
+    Ok(Json(json!({
+        "secret": secret,
+        "otpauth_url": format!("otpauth://totp/{}:{}?secret={secret}&issuer={}&algorithm=SHA1&digits=6&period=30", enc(&issuer), enc(&user.email), enc(&issuer)),
+    })))
+}
+
+#[derive(Deserialize)]
+struct TotpCode {
+    code: String,
+}
+
+async fn totp_enable(State(state): State<AppState>, user: CurrentUser, Json(req): Json<TotpCode>) -> AppResult<Json<Value>> {
+    if user.totp_enabled {
+        return Err(AppError::conflict("Two-factor authentication is already on"));
+    }
+    if !check_totp(&state, user.id, &req.code).await? {
+        return Err(AppError::bad_request("That code doesn't match. Check your device's clock and try the next code."));
+    }
+    sqlx::query("update users set totp_enabled = true where id = $1").bind(user.id).execute(&state.db).await?;
+    crate::audit::record(&state, &user, "user.2fa_enabled", "user", user.id, json!({})).await;
+    Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+struct TotpDisable {
+    password: String,
+}
+
+async fn totp_disable(State(state): State<AppState>, user: CurrentUser, Json(req): Json<TotpDisable>) -> AppResult<Json<Value>> {
+    if requires_2fa(&settings::get(&state).await?.require_2fa, &user.role) {
+        return Err(AppError::forbidden("Your organization requires two-factor authentication"));
+    }
+    let hash: Option<String> =
+        sqlx::query_scalar("select password_hash from users where id = $1").bind(user.id).fetch_one(&state.db).await?;
+    if !hash.is_some_and(|h| crypto::verify_password(&req.password, &h)) {
+        return Err(AppError::bad_request("Password is wrong"));
+    }
+    sqlx::query("update users set totp_enabled = false, totp_secret = null, totp_last_step = null where id = $1")
+        .bind(user.id)
+        .execute(&state.db)
+        .await?;
+    crate::audit::record(&state, &user, "user.2fa_disabled", "user", user.id, json!({})).await;
     Ok(Json(json!({ "ok": true })))
 }

@@ -1,6 +1,6 @@
 import { get } from './api';
 
-export type User = { id: string; email: string; name: string; role: 'admin' | 'user'; must_reset_password: boolean };
+export type User = { id: string; email: string; name: string; role: 'admin' | 'user'; must_reset_password: boolean; totp_enabled: boolean; must_enroll_2fa: boolean };
 export type Instance = { name: string; logo_url: string | null; needs_setup: boolean; open_signup: boolean; email_enabled: boolean };
 export type Me = { user: User; default_model_id: string | null; can_use_api_keys: boolean; show_metrics: boolean };
 

@@ -79,6 +79,39 @@ pub fn last4(secret: &str) -> String {
     chars[chars.len().saturating_sub(4)..].iter().collect()
 }
 
+/// RFC 6238 TOTP (HMAC-SHA1, 30 s, 6 digits). Returns the matching step within ±1 step of `now`.
+pub fn totp_match(secret: &[u8], code: &str, now: u64) -> Option<u64> {
+    let code = code.trim().replace(' ', "");
+    if code.len() != 6 || !code.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    let step = now / 30;
+    [step.saturating_sub(1), step, step + 1].into_iter().find(|s| totp_at(secret, *s) == code)
+}
+
+fn totp_at(secret: &[u8], step: u64) -> String {
+    let mut mac = Hmac::<sha1::Sha1>::new_from_slice(secret).expect("hmac key");
+    mac.update(&step.to_be_bytes());
+    let h = mac.finalize().into_bytes();
+    let o = (h[19] & 0x0f) as usize;
+    let n = (u32::from_be_bytes([h[o], h[o + 1], h[o + 2], h[o + 3]]) & 0x7fff_ffff) % 1_000_000;
+    format!("{n:06}")
+}
+
+pub fn base32(data: &[u8]) -> String {
+    const A: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+    let mut out = String::new();
+    for chunk in data.chunks(5) {
+        let mut buf = [0u8; 5];
+        buf[..chunk.len()].copy_from_slice(chunk);
+        let v = u64::from_be_bytes([0, 0, 0, buf[0], buf[1], buf[2], buf[3], buf[4]]);
+        for i in 0..(chunk.len() * 8).div_ceil(5) {
+            out.push(A[((v >> (35 - i * 5)) & 31) as usize] as char);
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -94,5 +127,15 @@ mod tests {
         assert!(!verify_password("wrong", &h));
         assert_eq!(last4("sk-abcdef"), "cdef");
         assert_eq!(s.api_key_hash("k"), s.api_key_hash("k"));
+    }
+
+    #[test]
+    fn totp_rfc6238_vector() {
+        // RFC 6238 appendix B, SHA1, T=59 -> 94287082 (last 6 digits).
+        let secret = b"12345678901234567890";
+        assert_eq!(totp_at(secret, 59 / 30), "287082");
+        assert_eq!(totp_match(secret, "287082", 59), Some(1));
+        assert_eq!(totp_match(secret, "287082", 59 + 90), None);
+        assert_eq!(base32(b"foobar"), "MZXW6YTBOI");
     }
 }

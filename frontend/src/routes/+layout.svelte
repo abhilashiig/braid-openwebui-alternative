@@ -24,6 +24,7 @@
 		if (!session.me && !isPublic) return '/login';
 		if (session.me && (path === '/login' || path === '/signup' || path === '/forgot')) return '/';
 		if (session.me && path.startsWith('/admin') && session.me.user.role !== 'admin') return '/';
+		if (session.me?.user.must_enroll_2fa && path !== '/settings') return '/settings';
 		return null;
 	});
 

@@ -23,10 +23,13 @@
 		showMetrics = v === null ? (session.me?.show_metrics ?? true) : v === '1';
 	} catch {}
 
-	if (!store.modelsLoaded) loadModels();
 	const loadKeys = () => get('/api/me/api-keys').then((k) => (keys = k));
-	loadKeys();
-	get('/api/me/usage').then((u) => (usage = u.data));
+	$effect(() => {
+		if (session.me?.user.must_enroll_2fa) return;
+		if (!store.modelsLoaded) loadModels();
+		loadKeys();
+		get('/api/me/usage').then((u) => (usage = u.data));
+	});
 
 	async function act(section: string, fn: () => Promise<any>, ok: string) {
 		try {
@@ -71,6 +74,29 @@
 		loadKeys();
 	}
 
+	let totp = $state<{ secret: string; otpauth_url: string; qr: string } | null>(null);
+	let totpCode = $state('');
+	let totpPassword = $state('');
+
+	async function startTotp() {
+		const r = await post('/api/me/2fa/setup');
+		const QR = await import('qrcode');
+		totp = { ...r, qr: await QR.toDataURL(r.otpauth_url, { margin: 1, width: 200 }) };
+	}
+
+	const enableTotp = (e: SubmitEvent) => (e.preventDefault(), act('totp', async () => {
+		await post('/api/me/2fa/enable', { code: totpCode });
+		totp = null;
+		totpCode = '';
+		await loadSession();
+	}, 'Two-factor authentication is on'));
+
+	const disableTotp = (e: SubmitEvent) => (e.preventDefault(), act('totp', async () => {
+		await post('/api/me/2fa/disable', { password: totpPassword });
+		totpPassword = '';
+		await loadSession();
+	}, 'Two-factor authentication is off'));
+
 	const active = (k: any) => !k.revoked_at && (!k.expires_at || new Date(k.expires_at) > new Date());
 </script>
 
@@ -82,6 +108,7 @@
 	<div class="mx-auto max-w-3xl space-y-6 px-4 py-6">
 		<h1 class="text-2xl font-semibold">Settings</h1>
 
+		{#if !session.me?.user.must_enroll_2fa}
 		<section class="card">
 			<h2 class="font-semibold">Profile</h2>
 			<form class="mt-4 flex flex-wrap items-end gap-3" onsubmit={saveProfile}>
@@ -117,6 +144,36 @@
 			</form>
 		</section>
 
+		{/if}
+		<section class="card" id="two-factor">
+			<h2 class="font-semibold">Two-factor authentication</h2>
+			{#if session.me?.user.must_enroll_2fa}
+				<p class="mt-2 rounded-lg bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950 dark:text-amber-200" role="alert">Your organization requires two-factor authentication. Set it up to continue.</p>
+			{/if}
+			{#if session.me?.user.totp_enabled}
+				<p class="mt-2 text-sm text-green-700 dark:text-green-400">On. Sign-in asks for a code from your authenticator app.</p>
+				<form class="mt-4 flex flex-wrap items-end gap-3" onsubmit={disableTotp}>
+					<div class="min-w-60 flex-1"><label class="label" for="t-pw">Password to turn it off</label><input id="t-pw" class="input" type="password" autocomplete="current-password" required bind:value={totpPassword} /></div>
+					<button class="btn-secondary">Turn off</button>
+				</form>
+			{:else if totp}
+				<div class="mt-4 flex flex-wrap gap-6">
+					<img src={totp.qr} alt="QR code for your authenticator app" class="h-40 w-40 rounded bg-white p-1" />
+					<form class="min-w-60 flex-1 space-y-3" onsubmit={enableTotp}>
+						<p class="text-sm">Scan the code with an authenticator app (1Password, Google Authenticator, Authy…), or enter this key:</p>
+						<code class="block rounded bg-zinc-100 p-2 text-sm break-all dark:bg-zinc-800">{totp.secret}</code>
+						<div><label class="label" for="t-code">6-digit code from the app</label><input id="t-code" class="input font-mono tracking-widest" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required bind:value={totpCode} /></div>
+						<button class="btn">Turn on</button>
+					</form>
+				</div>
+			{:else}
+				<p class="muted mt-2">Off. Add a code from an authenticator app to every sign-in.</p>
+				<button class="btn mt-4" onclick={startTotp}>Set up</button>
+			{/if}
+			<div class="mt-2">{@render note('totp')}</div>
+		</section>
+
+		{#if !session.me?.user.must_enroll_2fa}
 		<section class="card">
 			<div class="flex flex-wrap items-center justify-between gap-2">
 				<div>
@@ -165,6 +222,7 @@
 				</table>
 			</div>
 		</section>
+		{/if}
 	</div>
 </div>
 

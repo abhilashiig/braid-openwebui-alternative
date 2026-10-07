@@ -23,6 +23,12 @@ Open **http://localhost:5173**.
 
 ## Available now
 
+### 6. Two-factor sign-in
+
+- **Settings → Two-factor authentication**: **Set up**, scan the QR code with an authenticator app, enter a code, **Turn on**. Sign-in then asks for a code; each code works once. Turn it off with your password.
+- **Admin → Settings → Require two-factor authentication**: optional, admins only, or everyone. Users who must enroll are sent to Settings until they do.
+- **Admin → Users → (user) → Reset 2FA** for someone who lost their device.
+
 ### 5. Email, Docker, end-to-end check
 
 - **Admin → Settings → Outbound email (SMTP)**: host, port, security, username, password, From address, and **Send test**. With SMTP set, invitations and admin-forced resets are emailed (links still shown), and the sign-in page offers **Forgot your password?** (`/forgot`).

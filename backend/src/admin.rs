@@ -25,6 +25,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/admin/users/{id}", get(get_user).patch(update_user).delete(delete_user))
         .route("/api/admin/users/{id}/groups", put(set_user_groups))
         .route("/api/admin/users/{id}/reset-link", post(reset_link))
+        .route("/api/admin/users/{id}/reset-2fa", post(reset_2fa))
         .route("/api/admin/invitations", get(list_invitations).post(invite))
         .route("/api/admin/invitations/{id}", delete(revoke_invitation))
         .route("/api/admin/invitations/{id}/resend", post(resend_invitation))
@@ -49,6 +50,7 @@ struct UserRow {
     name: String,
     role: String,
     status: String,
+    totp_enabled: bool,
     allow_api_keys: Option<bool>,
     created_at: DateTime<Utc>,
     last_active_at: Option<DateTime<Utc>>,
@@ -56,7 +58,7 @@ struct UserRow {
     group_ids: Vec<Uuid>,
 }
 
-const USER_SELECT: &str = "select u.id, u.email, u.name, u.role, u.status, u.allow_api_keys, u.created_at, u.last_active_at,
+const USER_SELECT: &str = "select u.id, u.email, u.name, u.role, u.status, u.totp_enabled, u.allow_api_keys, u.created_at, u.last_active_at,
     array(select g.name from group_members m join groups g on g.id = m.group_id where m.user_id = u.id order by g.name) as groups,
     array(select m.group_id from group_members m where m.user_id = u.id) as group_ids
     from users u";
@@ -293,6 +295,18 @@ async fn reset_link(State(state): State<AppState>, admin: Admin, Path(id): Path<
         crate::mail::send_later(&state, email, "Reset your password".into(), format!("An admin asked you to set a new password:\n{link}\n\nThe link expires in 24 hours."));
     }
     Ok(Json(json!({ "link": link, "expires_in_hours": 24, "emailed": emailed })))
+}
+
+async fn reset_2fa(State(state): State<AppState>, admin: Admin, Path(id): Path<Uuid>) -> AppResult<Json<Value>> {
+    let n = sqlx::query("update users set totp_enabled = false, totp_secret = null, totp_last_step = null where id = $1")
+        .bind(id)
+        .execute(&state.db)
+        .await?;
+    if n.rows_affected() == 0 {
+        return Err(AppError::not_found("User"));
+    }
+    audit::record(&state, &admin.0, "user.2fa_reset", "user", id, json!({})).await;
+    Ok(Json(json!({ "ok": true })))
 }
 
 #[derive(Serialize, sqlx::FromRow)]
@@ -682,6 +696,9 @@ async fn put_settings(
     s.name = s.name.trim().to_string();
     if s.name.is_empty() {
         return Err(AppError::bad_request("Instance name is required"));
+    }
+    if !matches!(s.require_2fa.as_str(), "none" | "admins" | "everyone") {
+        return Err(AppError::bad_request("Two-factor requirement must be none, admins or everyone"));
     }
     if !matches!(s.smtp_tls.as_str(), "starttls" | "tls" | "none") {
         return Err(AppError::bad_request("SMTP security must be starttls, tls or none"));

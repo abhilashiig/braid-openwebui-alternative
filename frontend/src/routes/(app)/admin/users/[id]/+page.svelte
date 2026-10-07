@@ -88,7 +88,7 @@
 	<div class="mt-4 flex flex-wrap items-start justify-between gap-4">
 		<div>
 			<h2 class="text-xl font-semibold">{u.name}</h2>
-			<p class="muted">{u.email} · {u.role} · {u.status} · last active {timeAgo(u.last_active_at)}</p>
+			<p class="muted">{u.email} · {u.role} · {u.status}{u.totp_enabled ? ' · 2FA on' : ''} · last active {timeAgo(u.last_active_at)}</p>
 		</div>
 		<div class="flex flex-wrap gap-2">
 			{#if u.role === 'user'}
@@ -102,6 +102,9 @@
 				<button class="btn-secondary" onclick={() => update({ status: 'active' }, 'Reactivated')}>Reactivate</button>
 			{/if}
 			<button class="btn-secondary" onclick={forceReset}>Force password reset</button>
+			{#if u.totp_enabled}
+				<button class="btn-secondary" onclick={async () => { if (confirm('Turn off two-factor authentication for this user? They can sign in with just their password until they set it up again.')) { await post(`/api/admin/users/${id}/reset-2fa`); notice = 'Two-factor authentication reset'; load(); } }}>Reset 2FA</button>
+			{/if}
 			{#if u.id !== session.me?.user.id}<button class="btn-danger" onclick={() => (deleteOpen = true)}>Delete</button>{/if}
 		</div>
 	</div>
