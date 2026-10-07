@@ -1,11 +1,15 @@
+mod access;
+mod admin;
 mod audit;
 mod auth;
 mod crypto;
 mod error;
 mod settings;
 mod setup;
+mod providers;
 mod spa;
 mod state;
+mod upstream;
 
 use std::net::SocketAddr;
 
@@ -42,6 +46,8 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .merge(setup::routes())
         .merge(auth::routes())
+        .merge(admin::routes())
+        .merge(providers::routes())
         .layer(middleware::from_fn(csrf_guard))
         .route("/api/health", get(health))
         .fallback(spa::serve)

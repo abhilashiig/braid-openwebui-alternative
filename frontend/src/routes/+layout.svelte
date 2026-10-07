@@ -3,8 +3,8 @@
 	import favicon from '#lib/assets/favicon.svg';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { loadSession, session } from '#lib/session.svelte';
-	import { applyTheme } from '#lib/theme';
+	import { loadSession, session } from '#lib/session.svelte.ts';
+	import { applyTheme } from '#lib/theme.ts';
 	import type { LayoutProps } from './$types';
 
 	let { children }: LayoutProps = $props();
@@ -20,7 +20,7 @@
 		const path = page.url.pathname;
 		const isPublic = PUBLIC.some((p) => path === p || (p.endsWith('/') && path.startsWith(p)));
 		if (session.instance?.needs_setup) return path === '/setup' ? null : '/setup';
-		if (path === '/setup') return session.me ? '/' : '/login';
+		if (path === '/setup') return session.me ? '/welcome' : '/login';
 		if (!session.me && !isPublic) return '/login';
 		if (session.me && (path === '/login' || path === '/signup')) return '/';
 		if (session.me && path.startsWith('/admin') && session.me.user.role !== 'admin') return '/';

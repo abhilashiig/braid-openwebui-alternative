@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { post, errorMessage } from '#lib/api';
+	import { post, errorMessage } from '#lib/api.ts';
 	import AuthCard from '#lib/components/AuthCard.svelte';
 	import PasswordFields from '#lib/components/PasswordFields.svelte';
 

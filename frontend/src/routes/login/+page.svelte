@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { post, errorMessage } from '#lib/api';
-	import { loadSession, session } from '#lib/session.svelte';
+	import { post, errorMessage } from '#lib/api.ts';
+	import { loadSession, session } from '#lib/session.svelte.ts';
 	import AuthCard from '#lib/components/AuthCard.svelte';
 
 	let email = $state('');

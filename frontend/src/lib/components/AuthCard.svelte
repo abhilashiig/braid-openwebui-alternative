@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
-	import { session } from '#lib/session.svelte';
+	import { session } from '#lib/session.svelte.ts';
 
 	let { title, subtitle, children }: { title: string; subtitle?: string; children: Snippet } = $props();
 </script>

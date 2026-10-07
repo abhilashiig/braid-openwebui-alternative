@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { post, errorMessage } from '#lib/api';
-	import { loadSession } from '#lib/session.svelte';
+	import { post, errorMessage } from '#lib/api.ts';
+	import { loadSession } from '#lib/session.svelte.ts';
 	import AuthCard from '#lib/components/AuthCard.svelte';
 	import PasswordFields from '#lib/components/PasswordFields.svelte';
 

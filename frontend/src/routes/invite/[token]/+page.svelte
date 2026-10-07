@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { get, post, errorMessage } from '#lib/api';
-	import { loadSession } from '#lib/session.svelte';
+	import { get, post, errorMessage } from '#lib/api.ts';
+	import { loadSession } from '#lib/session.svelte.ts';
 	import AuthCard from '#lib/components/AuthCard.svelte';
 	import PasswordFields from '#lib/components/PasswordFields.svelte';
 

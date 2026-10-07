@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { post } from '#lib/api';
-	import { loadSession, session } from '#lib/session.svelte';
+	import { post } from '#lib/api.ts';
+	import { loadSession, session } from '#lib/session.svelte.ts';
 
 	async function logout() {
 		await post('/api/auth/logout');
