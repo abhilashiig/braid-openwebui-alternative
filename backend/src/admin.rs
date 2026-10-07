@@ -36,6 +36,8 @@ pub fn routes() -> Router<AppState> {
         .route("/api/admin/grants/{id}", delete(delete_grant))
         .route("/api/admin/settings", get(get_settings).put(put_settings))
         .route("/api/admin/audit", get(audit_log))
+        .route("/api/admin/usage", get(usage_report))
+        .route("/api/admin/usage.csv", get(usage_csv))
 }
 
 #[derive(Serialize, sqlx::FromRow)]
@@ -668,4 +670,91 @@ async fn audit_log(State(state): State<AppState>, _: Admin, Query(q): Query<Audi
         .map(|r| json!({ "id": r.0, "created_at": r.1, "actor_email": r.2, "action": r.3, "target_type": r.4,
                          "target_id": r.5, "details": r.6, "ip": r.7 }))
         .collect::<Vec<_>>())))
+}
+
+#[derive(Deserialize)]
+struct UsageQ {
+    days: Option<i32>,
+    by: Option<String>,
+    source: Option<String>,
+}
+
+/// Usage dashboard: totals grouped by day, user, model, provider or API key (NFR-AUD-02, FR-GW-08).
+async fn usage_report(State(state): State<AppState>, _: Admin, Query(q): Query<UsageQ>) -> AppResult<Json<Value>> {
+    let (key, label) = match q.by.as_deref().unwrap_or("day") {
+        "user" => ("l.user_id::text", "coalesce(max(u.name) || ' <' || max(u.email) || '>', '(deleted user)')"),
+        "model" => ("l.model_name", "coalesce(l.model_name, '(unknown)')"),
+        "provider" => ("l.provider_name", "coalesce(l.provider_name, '(unknown)')"),
+        "key" => ("l.api_key_id::text", "coalesce(max(k.name) || ' (' || max(k.prefix) || '…, ' || max(u.email) || ')', 'Chat (no key)')"),
+        _ => ("l.created_at::date::text", "l.created_at::date::text"),
+    };
+    let order = if q.by.as_deref().unwrap_or("day") == "day" { "1 desc" } else { "requests desc" };
+    let rows: Vec<(Option<String>, Option<String>, i64, i64, Option<i64>, Option<i64>, Option<i64>, Option<f64>, Option<f64>, Option<f64>, Option<f64>, Option<f64>)> =
+        sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "select {key} as k, {label} as label, count(*) as requests, count(*) filter (where l.status >= 400) as errors,
+                sum(l.input_tokens)::bigint, sum(l.output_tokens)::bigint, sum(l.cached_tokens)::bigint, sum(l.cost),
+                avg(l.output_tps)::float8, avg(l.ttft_ms)::float8, avg(l.prefill_tps)::float8,
+                case when sum(l.input_tokens) filter (where l.cached_tokens is not null) > 0
+                     then sum(l.cached_tokens)::float8 / sum(l.input_tokens) filter (where l.cached_tokens is not null) end
+             from usage_log l left join users u on u.id = l.user_id left join api_keys k on k.id = l.api_key_id
+             where l.created_at >= now() - make_interval(days => $1)
+               and ($2::text is null or l.source = $2) and l.source <> 'skill'
+             group by {key} order by {order} limit 500"
+        )))
+        .bind(q.days.unwrap_or(30).clamp(1, 366))
+        .bind(q.source.filter(|s| s == "chat" || s == "api"))
+        .fetch_all(&state.db)
+        .await?;
+    let searches: i64 = sqlx::query_scalar(
+        "select count(*) from usage_log where source = 'skill' and created_at >= now() - make_interval(days => $1)",
+    )
+    .bind(q.days.unwrap_or(30).clamp(1, 366))
+    .fetch_one(&state.db)
+    .await?;
+    Ok(Json(json!({
+        "rows": rows.iter().map(|r| json!({
+            "key": r.0, "label": r.1, "requests": r.2, "errors": r.3, "input_tokens": r.4, "output_tokens": r.5,
+            "cached_tokens": r.6, "cost": r.7, "avg_output_tps": r.8, "avg_ttft_ms": r.9, "avg_prefill_tps": r.10, "cache_rate": r.11,
+        })).collect::<Vec<_>>(),
+        "web_searches": searches,
+    })))
+}
+
+async fn usage_csv(State(state): State<AppState>, _: Admin, Query(q): Query<UsageQ>) -> AppResult<axum::response::Response> {
+    use axum::response::IntoResponse;
+    let rows: Vec<(DateTime<Utc>, String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, i32, Option<i32>, Option<i32>, Option<i32>, Option<f64>, Option<i32>, Option<i32>, Option<f32>, Option<String>)> =
+        sqlx::query_as(
+            "select l.created_at, l.source, u.email, k.prefix, l.model_name, l.provider_name, l.metrics_source, l.status,
+                l.input_tokens, l.output_tokens, l.cached_tokens, l.cost, l.latency_ms, l.ttft_ms, l.output_tps, l.error
+             from usage_log l left join users u on u.id = l.user_id left join api_keys k on k.id = l.api_key_id
+             where l.created_at >= now() - make_interval(days => $1) order by l.created_at desc limit 100000",
+        )
+        .bind(q.days.unwrap_or(30).clamp(1, 366))
+        .fetch_all(&state.db)
+        .await?;
+    let esc = |s: &str| {
+        // Leading =,+,-,@ would be evaluated as formulas by spreadsheet apps.
+        let s = if s.starts_with(['=', '+', '-', '@']) { format!("'{s}") } else { s.to_string() };
+        format!("\"{}\"", s.replace('"', "\"\""))
+    };
+    let o = |v: Option<String>| v.map(|s| esc(&s)).unwrap_or_default();
+    let n = |v: Option<String>| v.unwrap_or_default();
+    let mut csv = String::from("time,source,user,api_key,model,provider,metrics_source,status,input_tokens,output_tokens,cached_tokens,cost,latency_ms,ttft_ms,output_tps,error\n");
+    for r in rows {
+        csv.push_str(&format!(
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
+            r.0.to_rfc3339(), r.1, o(r.2), o(r.3), o(r.4), o(r.5), o(r.6), r.7,
+            n(r.8.map(|v| v.to_string())), n(r.9.map(|v| v.to_string())), n(r.10.map(|v| v.to_string())),
+            n(r.11.map(|v| format!("{v:.6}"))), n(r.12.map(|v| v.to_string())), n(r.13.map(|v| v.to_string())),
+            n(r.14.map(|v| format!("{v:.1}"))), o(r.15),
+        ));
+    }
+    Ok((
+        [
+            (axum::http::header::CONTENT_TYPE, "text/csv; charset=utf-8"),
+            (axum::http::header::CONTENT_DISPOSITION, "attachment; filename=\"braid-usage.csv\""),
+        ],
+        csv,
+    )
+        .into_response())
 }

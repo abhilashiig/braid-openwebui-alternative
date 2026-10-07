@@ -5,6 +5,8 @@ mod auth;
 mod chat;
 mod crypto;
 mod error;
+mod gateway;
+mod keys;
 mod llm;
 mod settings;
 mod setup;
@@ -54,10 +56,13 @@ async fn main() -> anyhow::Result<()> {
         .merge(providers::routes())
         .merge(skills::routes())
         .merge(chat::routes())
+        .merge(keys::routes())
         .layer(middleware::from_fn(csrf_guard))
+        .merge(gateway::routes())
         .route("/api/health", get(health))
         .fallback(spa::serve)
         .layer(middleware::from_fn(security_headers))
+        .layer(axum::extract::DefaultBodyLimit::max(25 * 1024 * 1024))
         .layer(TraceLayer::new_for_http())
         .with_state(state.clone());
 

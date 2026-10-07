@@ -6,8 +6,9 @@ use sqlx::{PgPool, QueryBuilder};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct UsageRow {
+    pub at: chrono::DateTime<chrono::Utc>,
     pub source: &'static str,
     pub user_id: Option<Uuid>,
     pub api_key_id: Option<Uuid>,
@@ -29,6 +30,38 @@ pub struct UsageRow {
     pub output_tps: Option<f64>,
     pub prefill_tps: Option<f64>,
     pub metrics_source: Option<&'static str>,
+    pub content: Option<serde_json::Value>,
+}
+
+impl Default for UsageRow {
+    /// Stamped at creation so batching does not shift the recorded time.
+    fn default() -> Self {
+        Self {
+            at: chrono::Utc::now(),
+            source: "chat",
+            user_id: None,
+            api_key_id: None,
+            chat_id: None,
+            model_id: None,
+            provider_id: None,
+            model_name: None,
+            provider_name: None,
+            status: 0,
+            error: None,
+            input_tokens: None,
+            output_tokens: None,
+            cached_tokens: None,
+            cache_write_tokens: None,
+            reasoning_tokens: None,
+            cost: None,
+            latency_ms: None,
+            ttft_ms: None,
+            output_tps: None,
+            prefill_tps: None,
+            metrics_source: None,
+            content: None,
+        }
+    }
 }
 
 pub fn spawn_writer(db: PgPool) -> mpsc::Sender<UsageRow> {
@@ -59,12 +92,13 @@ pub fn spawn_writer(db: PgPool) -> mpsc::Sender<UsageRow> {
 
 async fn insert(db: &PgPool, rows: &[UsageRow]) -> sqlx::Result<()> {
     let mut q = QueryBuilder::new(
-        "insert into usage_log (source, user_id, api_key_id, chat_id, model_id, provider_id, model_name, provider_name, status,
+        "insert into usage_log (created_at, source, user_id, api_key_id, chat_id, model_id, provider_id, model_name, provider_name, status,
          error, input_tokens, output_tokens, cached_tokens, cache_write_tokens, reasoning_tokens, cost, latency_ms, ttft_ms,
-         output_tps, prefill_tps, metrics_source) ",
+         output_tps, prefill_tps, metrics_source, content) ",
     );
     q.push_values(rows, |mut b, r| {
-        b.push_bind(r.source)
+        b.push_bind(r.at)
+            .push_bind(r.source)
             .push_bind(r.user_id)
             .push_bind(r.api_key_id)
             .push_bind(r.chat_id)
@@ -84,7 +118,8 @@ async fn insert(db: &PgPool, rows: &[UsageRow]) -> sqlx::Result<()> {
             .push_bind(r.ttft_ms.map(|v| v as i32))
             .push_bind(r.output_tps.map(|v| v as f32))
             .push_bind(r.prefill_tps.map(|v| v as f32))
-            .push_bind(r.metrics_source);
+            .push_bind(r.metrics_source)
+            .push_bind(&r.content);
     });
     q.build().execute(db).await?;
     Ok(())
@@ -133,7 +168,7 @@ impl Meter {
     ) -> Metrics {
         let ttft = self.first.map(|f| f.duration_since(self.start));
         let span = self.first.zip(self.last).map(|(f, l)| l.duration_since(f).as_secs_f64());
-        let measured_out = usage.output_tokens.zip(span).filter(|(n, s)| *n > 1 && *s > 0.0).map(|(n, s)| n as f64 / s);
+        let measured_out = usage.output_tokens.zip(span).filter(|(n, s)| *n > 1 && *s >= 0.05).map(|(n, s)| n as f64 / s);
         let measured_prefill =
             usage.input_tokens.zip(ttft).filter(|(_, t)| !t.is_zero()).map(|(n, t)| n as f64 / t.as_secs_f64());
         let (p_prefill, p_out) = timings.unwrap_or((None, None));

@@ -10,6 +10,7 @@
 		['/admin/groups', 'Groups'],
 		['/admin/skills', 'Skills'],
 		['/admin/usage', 'Usage'],
+		['/admin/api-keys', 'API keys'],
 		['/admin/audit', 'Audit log'],
 		['/admin/settings', 'Settings']
 	];

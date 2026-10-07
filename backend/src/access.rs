@@ -107,3 +107,18 @@ pub async fn resolve(state: &AppState, user_id: Uuid, r: ModelRef<'_>) -> AppRes
     let provider = crate::upstream::load_provider(state, model.provider_id).await?;
     Ok(Resolved { model, provider })
 }
+
+/// User override, else any group (including Everyone) that allows it, else the global setting.
+pub async fn can_use_api_keys(state: &AppState, user_id: Uuid) -> AppResult<bool> {
+    let global = crate::settings::get(state).await?.allow_api_keys;
+    Ok(sqlx::query_scalar(
+        "select coalesce(u.allow_api_keys, (select bool_or(g.allow_api_keys) from groups g
+            left join group_members m on m.group_id = g.id and m.user_id = u.id
+            where g.is_everyone or m.user_id is not null), $2)
+         from users u where u.id = $1",
+    )
+    .bind(user_id)
+    .bind(global)
+    .fetch_one(&state.db)
+    .await?)
+}

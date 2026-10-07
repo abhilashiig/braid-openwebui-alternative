@@ -23,6 +23,18 @@ Open **http://localhost:5173**.
 
 ## Available now
 
+### 4. API gateway, API keys, skills, usage
+
+- **Admin → Settings**: tick **Allow all users to create platform API keys** (or allow it per group or per user).
+- **Settings** (sidebar, `/settings`): profile, default model, metrics toggle, password change, **API keys** (create with optional expiry, model limit, rate limit and monthly token quota; the full key is shown once), and your usage for the last 30 days.
+- **Settings → How to use the API** (`/settings/api`): base URLs and copy-ready curl, OpenAI SDK and Anthropic SDK examples for this instance. Any model works through either format; tested with the official `openai` and `anthropic` Python SDKs, streaming and tools included.
+  ```sh
+  curl http://localhost:5173/api/v1/models -H "Authorization: Bearer sk-braid-…"
+  ```
+- **Admin → Skills**: enable web search, paste a Brave Search API key, **Test**, and choose everyone or granted groups/users.
+- **Admin → Usage**: requests, errors, tokens, cache rate, average speed and TTFT, and cost, grouped by day, user, model, provider or API key, filtered to chat or API traffic; **Export CSV**.
+- **Admin → API keys**: every user's keys, with revoke. Revoking a key or deactivating a user blocks their next call.
+
 ### 3. Chat (any signed-in user)
 
 - **http://localhost:5173**: pick a model (top left; only models you can access are listed) and send a message. Replies stream in, with Markdown, highlighted code blocks (with Copy), tables and LaTeX math (`$E=mc^2$`, `$$…$$`).
@@ -32,7 +44,7 @@ Open **http://localhost:5173**.
 - Thinking models show a collapsible **Thought process**.
 - **Attach** images (vision models) or text/code files via 📎, paste or drag-and-drop. PDFs are not supported yet.
 - **Sidebar**: chats grouped by date; search by title or message content; rename ✎ or delete 🗑 on hover.
-- **Web search**: an admin enables it under **Admin → Skills** with a Brave Search API key (the Skills admin page arrives in the next update; for now it is set up through the API). Then the 🌐 toggle appears for tool-capable models and replies show "Searched: …" steps and clickable source chips.
+- **Web search**: an admin enables it under **Admin → Skills** with a Brave Search API key. Then the 🌐 toggle appears for tool-capable models, and replies show "Searched: …" steps and clickable source chips.
 - Light/dark: **Theme** in the sidebar cycles system → light → dark. Works on phone-sized screens (☰ opens the sidebar).
 
 ### 2. Admin console (sign in as the admin)

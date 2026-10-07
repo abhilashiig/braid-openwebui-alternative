@@ -228,21 +228,13 @@ async fn logout(State(state): State<AppState>, headers: HeaderMap) -> AppResult<
 
 async fn me(State(state): State<AppState>, user: CurrentUser) -> AppResult<Json<Value>> {
     let s = settings::get(&state).await?;
-    let extra: (Option<Uuid>, bool) = sqlx::query_as(
-        "select u.default_model_id,
-            coalesce(u.allow_api_keys, (select bool_or(g.allow_api_keys) from groups g
-                left join group_members m on m.group_id = g.id and m.user_id = u.id
-                where g.is_everyone or m.user_id is not null), $2)
-         from users u where u.id = $1",
-    )
-    .bind(user.id)
-    .bind(s.allow_api_keys)
-    .fetch_one(&state.db)
-    .await?;
+    let default_model: Option<Uuid> =
+        sqlx::query_scalar("select default_model_id from users where id = $1").bind(user.id).fetch_one(&state.db).await?;
+    let can_use_api_keys = crate::access::can_use_api_keys(&state, user.id).await?;
     Ok(Json(json!({
         "user": user,
-        "default_model_id": extra.0.or(s.default_model_id),
-        "can_use_api_keys": extra.1,
+        "default_model_id": default_model.or(s.default_model_id),
+        "can_use_api_keys": can_use_api_keys,
         "show_metrics": s.show_metrics,
     })))
 }

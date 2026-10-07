@@ -49,9 +49,6 @@ pub struct Msg {
 }
 
 impl Msg {
-    pub fn text(role: Role, text: impl Into<String>) -> Self {
-        Self { role, content: vec![Part::Text { text: text.into() }], tool_calls: vec![], tool_call_id: None }
-    }
     pub fn joined_text(&self) -> String {
         self.content
             .iter()
